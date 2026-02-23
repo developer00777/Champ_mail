@@ -102,15 +102,11 @@ def upgrade() -> None:
     op.create_index("idx_link_clicks_utm_source", "link_clicks", ["utm_source"])
     op.create_index("idx_link_clicks_utm_campaign", "link_clicks", ["utm_campaign"])
 
-    # ----------------------------------------------------------------
-    # Add clicked_urls column to send_logs
-    # ----------------------------------------------------------------
-    op.add_column("send_logs", sa.Column("clicked_urls", postgresql.JSON(), nullable=True))
+    # clicked_urls already exists from migration 004 — skip duplicate add
 
 
 def downgrade() -> None:
-    # Remove clicked_urls from send_logs
-    op.drop_column("send_logs", "clicked_urls")
+    # clicked_urls owned by migration 004 — don't drop here
 
     # Drop link_clicks indexes and table
     op.drop_index("idx_link_clicks_utm_campaign", "link_clicks")

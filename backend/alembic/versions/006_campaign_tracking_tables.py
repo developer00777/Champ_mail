@@ -244,7 +244,7 @@ def upgrade() -> None:
     op.add_column("send_logs", sa.Column("from_address", sa.String(255), nullable=True))
     op.add_column("send_logs", sa.Column("prospect_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.add_column("send_logs", sa.Column("sequence_enrollment_id", postgresql.UUID(as_uuid=True), nullable=True))
-    op.add_column("send_logs", sa.Column("bounce_reason", sa.Text(), nullable=True))
+    # bounce_reason already exists from migration 004 — do NOT add it again
     op.add_column("send_logs", sa.Column("smtp_response", sa.Text(), nullable=True))
     op.add_column("send_logs", sa.Column("reply_text", sa.Text(), nullable=True))
     op.add_column("send_logs", sa.Column("team_id", postgresql.UUID(as_uuid=True), nullable=True))
@@ -324,30 +324,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
     )
 
-    # ----------------------------------------------------------------
-    # Email Settings table
-    # ----------------------------------------------------------------
-    op.create_table(
-        "email_settings",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True),
-        sa.Column("smtp_host", sa.String(255), nullable=True),
-        sa.Column("smtp_port", sa.Integer(), nullable=True),
-        sa.Column("smtp_username", sa.String(255), nullable=True),
-        sa.Column("smtp_password", sa.String(500), nullable=True),
-        sa.Column("smtp_use_tls", sa.Boolean(), default=True),
-        sa.Column("imap_host", sa.String(255), nullable=True),
-        sa.Column("imap_port", sa.Integer(), nullable=True),
-        sa.Column("imap_username", sa.String(255), nullable=True),
-        sa.Column("imap_password", sa.String(500), nullable=True),
-        sa.Column("imap_use_ssl", sa.Boolean(), default=True),
-        sa.Column("from_name", sa.String(255), nullable=True),
-        sa.Column("from_email", sa.String(255), nullable=True),
-        sa.Column("signature_html", sa.Text(), nullable=True),
-        sa.Column("daily_send_limit", sa.Integer(), default=200),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
-    )
+    # email_settings already created in migration 001 — skip duplicate create
 
     # ----------------------------------------------------------------
     # Workflows table
@@ -386,7 +363,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("workflow_executions")
     op.drop_table("workflows")
-    op.drop_table("email_settings")
+    # email_settings owned by migration 001 — don't drop here
     op.drop_table("api_keys")
     op.drop_table("daily_stats")
 
