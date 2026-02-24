@@ -47,5 +47,5 @@ EXPOSE ${PORT}
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Run the application (railway.toml startCommand overrides this on Railway)
-CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
+# Run migrations then start the application
+CMD sh -c "echo '=== Running migrations ===' && alembic upgrade head && echo '=== Starting server on port ${PORT} ===' && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"
