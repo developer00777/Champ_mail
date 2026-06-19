@@ -146,6 +146,8 @@ class GraphDatabase:
         title: str = "",
         phone: str = "",
         linkedin_url: str = "",
+        person_id: str = "",
+        account_id: str = "",
         **extra_fields,
     ) -> dict:
         """Ingest a prospect into ChampGraph."""
@@ -160,6 +162,19 @@ class GraphDatabase:
         for k, v in extra_fields.items():
             if v:
                 parts.append(f"{k}: {v}")
+
+        # Derive suite identity-spine ids if not supplied, so the node always
+        # carries a stable key (person_id/account_id) and stays joinable with
+        # ChampGraph/Graphiti and the rest of the suite — not an email-keyed island.
+        if not person_id or not account_id:
+            try:
+                from app.services.identity_service import resolve_identity
+                ident = resolve_identity(email=email, linkedin_url=linkedin_url,
+                                         company_domain=extra_fields.get("company_domain", ""))
+                person_id = person_id or ident["person_id"]
+                account_id = account_id or ident["account_id"]
+            except Exception:
+                pass
 
         content = "\n".join(parts)
         # Use email domain as account name for grouping
@@ -180,6 +195,8 @@ class GraphDatabase:
                     "title": title,
                     "phone": phone,
                     "linkedin_url": linkedin_url,
+                    "person_id": person_id,
+                    "account_id": account_id,
                 },
             },
             "ingested": result.get("success", result.get("message", "") != ""),

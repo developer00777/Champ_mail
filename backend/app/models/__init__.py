@@ -11,8 +11,10 @@ from app.models.campaign import Campaign, CampaignProspect, Prospect
 from app.models.sequence import Sequence, SequenceStep, SequenceEnrollment, SequenceStepExecution, SequenceStepLog
 from app.models.send_log import SendLog, DailyStats, BounceLog, APIKey
 from app.models.utm import CampaignUTMConfig, LinkClick, UTMPreset
+from app.models.suppression import Suppression
 
 __all__ = [
+    "Suppression",
     "User",
     "Team",
     "TeamInvite",
