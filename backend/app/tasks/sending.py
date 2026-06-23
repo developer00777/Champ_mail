@@ -64,6 +64,28 @@ def send_email_task(self, prospect_id: str, template_id: str, subject: str, html
                     except Exception:
                         pass  # Send even if tracking setup fails
 
+                # Pre-send gate (InboxLint): stop a spammy / non-compliant email before it
+                # burns the owned-reseller inbox reputation (the Vision's deliverability moat).
+                # block → don't send; warn/pass → proceed. Fail-open: a linter error never
+                # blocks a legitimate send.
+                try:
+                    from app.services.inboxlint import lint as _inbox_lint
+                    _report = _inbox_lint(
+                        subject, final_html,
+                        has_unsubscribe=bool(list_unsub),
+                        has_physical_address=True,
+                        is_cold=True,
+                    )
+                    if _report.level == "block":
+                        return {
+                            "status": "blocked",
+                            "reason": "inboxlint",
+                            "email": to_email,
+                            "issues": _report.to_dict()["issues"],
+                        }
+                except Exception:
+                    pass
+
                 result = await mail_engine_client.send_email(
                     recipient=to_email,
                     recipient_name=to_name,
