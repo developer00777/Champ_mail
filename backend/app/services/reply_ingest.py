@@ -126,10 +126,14 @@ class ReplyIngestService:
         self.resolve_message_ids = resolve_message_ids
         self.on_reply = on_reply
         self.on_optout = on_optout
+        # ReplyIQ feed: genuine replies (body, subject) collected each run for the
+        # campaign/persona-level intelligence layer (services/replyiq.py).
+        self.recent_replies: list[tuple[str, str]] = []
 
     def run_once(self) -> list[ReplyOutcome]:
         known = self.resolve_message_ids()
         outcomes: list[ReplyOutcome] = []
+        self.recent_replies = []  # reset the ReplyIQ batch for this run
         for m in self.client.fetch_unseen():
             kind = classify_inbound(
                 return_path=m.return_path, auto_submitted=m.auto_submitted,
@@ -139,6 +143,7 @@ class ReplyIngestService:
             optout = False
             intent = intent_action = None
             if kind == InboundKind.REPLY:
+                self.recent_replies.append((m.body, m.subject))  # feed ReplyIQ
                 matched = match_thread(m.in_reply_to, m.references, known)
                 if is_optout(m.body):
                     optout = True
