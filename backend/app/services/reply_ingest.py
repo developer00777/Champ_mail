@@ -106,6 +106,8 @@ class ReplyOutcome:
     matched_message_id: Optional[str]
     optout: bool
     from_addr: str
+    intent: Optional[str] = None          # reply-intent (set for genuine REPLYs)
+    intent_action: Optional[str] = None   # recommended routing action
 
 
 class ReplyIngestService:
@@ -124,10 +126,14 @@ class ReplyIngestService:
         self.resolve_message_ids = resolve_message_ids
         self.on_reply = on_reply
         self.on_optout = on_optout
+        # ReplyIQ feed: genuine replies (body, subject) collected each run for the
+        # campaign/persona-level intelligence layer (services/replyiq.py).
+        self.recent_replies: list[tuple[str, str]] = []
 
     def run_once(self) -> list[ReplyOutcome]:
         known = self.resolve_message_ids()
         outcomes: list[ReplyOutcome] = []
+        self.recent_replies = []  # reset the ReplyIQ batch for this run
         for m in self.client.fetch_unseen():
             kind = classify_inbound(
                 return_path=m.return_path, auto_submitted=m.auto_submitted,
@@ -135,7 +141,9 @@ class ReplyIngestService:
             )
             matched = None
             optout = False
+            intent = intent_action = None
             if kind == InboundKind.REPLY:
+                self.recent_replies.append((m.body, m.subject))  # feed ReplyIQ
                 matched = match_thread(m.in_reply_to, m.references, known)
                 if is_optout(m.body):
                     optout = True
@@ -143,6 +151,15 @@ class ReplyIngestService:
                 elif matched:
                     # Genuine human reply → pause that prospect's remaining steps.
                     self.on_reply(matched, m.from_addr)
+                # Classify intent on any genuine reply so the floor can route
+                # (meeting→book, interested→rep, objection→handle, not-interested→suppress).
+                try:
+                    from app.services.reply_intent import classify_intent
+                    ir = classify_intent(m.body, m.subject)
+                    intent, intent_action = ir.intent.value, ir.action.value
+                except Exception:
+                    pass
             outcomes.append(ReplyOutcome(kind=kind, matched_message_id=matched,
-                                         optout=optout, from_addr=m.from_addr))
+                                         optout=optout, from_addr=m.from_addr,
+                                         intent=intent, intent_action=intent_action))
         return outcomes

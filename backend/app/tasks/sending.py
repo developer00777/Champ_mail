@@ -46,7 +46,8 @@ def send_email_task(self, prospect_id: str, template_id: str, subject: str, html
                 # regardless of which campaign first suppressed it.
                 from app.services.suppression_service import suppression_service
                 if await suppression_service.is_suppressed(
-                    session, prospect.get("team_id"), to_email
+                    session, prospect.get("team_id"), to_email,
+                    person_id=prospect.get("person_id"),
                 ):
                     return {"status": "skipped", "reason": "suppressed", "email": to_email}
 
@@ -63,6 +64,28 @@ def send_email_task(self, prospect_id: str, template_id: str, subject: str, html
                         list_unsub = await _list_unsubscribe(campaign_id, prospect_id)
                     except Exception:
                         pass  # Send even if tracking setup fails
+
+                # Pre-send gate (InboxLint): stop a spammy / non-compliant email before it
+                # burns the owned-reseller inbox reputation (the Vision's deliverability moat).
+                # block → don't send; warn/pass → proceed. Fail-open: a linter error never
+                # blocks a legitimate send.
+                try:
+                    from app.services.inboxlint import lint as _inbox_lint
+                    _report = _inbox_lint(
+                        subject, final_html,
+                        has_unsubscribe=bool(list_unsub),
+                        has_physical_address=True,
+                        is_cold=True,
+                    )
+                    if _report.level == "block":
+                        return {
+                            "status": "blocked",
+                            "reason": "inboxlint",
+                            "email": to_email,
+                            "issues": _report.to_dict()["issues"],
+                        }
+                except Exception:
+                    pass
 
                 result = await mail_engine_client.send_email(
                     recipient=to_email,

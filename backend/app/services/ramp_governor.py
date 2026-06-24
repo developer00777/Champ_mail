@@ -43,6 +43,8 @@ class DomainMetrics:
     warmup_day: int             # current warmup step index (0-based)
     sent_today: int = 0
     sample_size: int = 0        # messages the rates are computed over
+    sending_ip: str | None = None  # reputation is owned PER SENDING IP (plan H);
+    #                                metrics should be fed per (domain, ip)
 
 
 @dataclass
@@ -80,3 +82,37 @@ def evaluate_domain(m: DomainMetrics) -> RampDecision:
 
     return RampDecision(RampAction.HOLD, cap,
                         "healthy but holding (insufficient evidence or seed < 85% or at max)")
+
+
+def next_warmup_day(action: RampAction, warmup_day: int) -> int:
+    """Warmup step index after applying an action.
+
+    THROTTLE steps the index DOWN (plan H): a throttle that only cut the cap but
+    left warmup_day untouched would let the next ADVANCE jump back to the ORIGINAL
+    step, undoing the throttle. Stepping the index down means a later ADVANCE
+    resumes from the throttled step. PAUSE/HOLD leave the index where it is.
+    """
+    last = len(WARMUP_CAPS) - 1
+    if action == RampAction.ADVANCE:
+        return min(warmup_day + 1, last)
+    if action == RampAction.THROTTLE:
+        return max(0, warmup_day - 1)
+    return warmup_day
+
+
+if __name__ == "__main__":  # pure self-check (no DB)
+    # THROTTLE must decrement so ADVANCE resumes from the throttled step.
+    assert next_warmup_day(RampAction.THROTTLE, 3) == 2
+    assert next_warmup_day(RampAction.THROTTLE, 0) == 0          # floor
+    assert next_warmup_day(RampAction.ADVANCE, 2) == 3
+    assert next_warmup_day(RampAction.ADVANCE, len(WARMUP_CAPS) - 1) == len(WARMUP_CAPS) - 1
+    assert next_warmup_day(RampAction.HOLD, 4) == 4
+    # caution band → THROTTLE to the lower cap.
+    d = evaluate_domain(DomainMetrics(bounce_rate=0.025, complaint_rate=0.0,
+                                      seed_placement=0.9, warmup_day=3, sample_size=100))
+    assert d.action == RampAction.THROTTLE and d.new_cap == WARMUP_CAPS[2], d
+    # 4% bounce → PAUSE.
+    p = evaluate_domain(DomainMetrics(bounce_rate=0.04, complaint_rate=0.0,
+                                      seed_placement=1.0, warmup_day=2, sample_size=100))
+    assert p.action == RampAction.PAUSE, p
+    print("ramp_governor self-check OK")
