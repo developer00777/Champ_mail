@@ -38,23 +38,35 @@ type header struct {
 	Value string
 }
 
+// DKIMMinKeyBits is the RSA key-size floor (plan Q3). Sub-2048 DKIM is treated as
+// insecure / ignored by major receivers, so a weak key silently kills auth.
+const DKIMMinKeyBits = 2048
+
 func parsePrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(strings.TrimSpace(pemStr)))
 	if block == nil {
 		return nil, errors.New("dkim: no PEM block in private key")
 	}
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
+	var key *rsa.PrivateKey
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		key = k
+	} else {
+		keyAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("dkim: parse private key: %w", err)
+		}
+		rsaKey, ok := keyAny.(*rsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("dkim: not an RSA private key")
+		}
+		key = rsaKey
 	}
-	keyAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("dkim: parse private key: %w", err)
+	// Key-size floor — enforced on every sign, so per-domain keys loaded from the
+	// DB are guarded too, not just the startup key.
+	if key.N.BitLen() < DKIMMinKeyBits {
+		return nil, fmt.Errorf("dkim: RSA key is %d bits; minimum %d required", key.N.BitLen(), DKIMMinKeyBits)
 	}
-	rsaKey, ok := keyAny.(*rsa.PrivateKey)
-	if !ok {
-		return nil, errors.New("dkim: not an RSA private key")
-	}
-	return rsaKey, nil
+	return key, nil
 }
 
 // canonicalizeHeaderRelaxed applies relaxed header canonicalization (RFC 6376

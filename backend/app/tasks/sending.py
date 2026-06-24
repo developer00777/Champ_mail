@@ -46,7 +46,8 @@ def send_email_task(self, prospect_id: str, template_id: str, subject: str, html
                 # regardless of which campaign first suppressed it.
                 from app.services.suppression_service import suppression_service
                 if await suppression_service.is_suppressed(
-                    session, prospect.get("team_id"), to_email
+                    session, prospect.get("team_id"), to_email,
+                    person_id=prospect.get("person_id"),
                 ):
                     return {"status": "skipped", "reason": "suppressed", "email": to_email}
 
