@@ -83,6 +83,63 @@ Follows `plan.md §3` phases. None of these remove or alter the InboxLint gate.
 
 ---
 
+## 3a. Phase 1–3 — DONE (committed)
+
+Applied + verified (`go test ./internal/mailer` green; Python self-checks green):
+- **B/C/D** `builder.go`: QP-encode bodies, RFC-2047 Subject/display-names, CR/LF header-injection strip.
+- **E** `dkim.go`: 2048-bit key floor on every sign.
+- **F/G** `suppression_service.py` + model + migration `010`: `team OR NULL` global gate, person-aware
+  (`email OR person_id`), canonicalization (+tag/gmail-dots), partial unique index on global email.
+- **H** `ramp_governor.py`/`tasks/ramp.py`: `next_warmup_day` (THROTTLE steps down), `sending_ip` seam.
+
+InboxLint untouched.
+
+## 3b. Phase 4–5 — build spec (needs a live :25 host to validate)
+
+These are **new surface**, not fixes — they require a port-25 host + real MX, so they are specced here
+rather than shipped blind. Both build on `emersion/go-smtp` + `go-imap` (`plan.md §3`), which is why
+they're separated from the 1–3 hardening.
+
+### Phase 4 — inbound MX + IMAP
+- **`mail-engine/internal/smtpd/` (new):** a `go-smtp` server on :25 implementing `smtp.Backend` /
+  `smtp.Session`. **The load-bearing correctness rule (plan §3 Phase 4): validate the recipient at
+  `Rcpt()` time and return `550` for an unknown mailbox — NEVER accept-then-bounce** (backscatter
+  blocklists the IP). Skeleton:
+  ```go
+  func (s *Session) Rcpt(to string, _ *smtp.RcptOptions) error {
+      if !mailboxExists(s.ctx, to) {           // DB lookup against provisioned mailboxes
+          return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5,1,1},
+              Message: "no such user"}          // reject AT RCPT — no backscatter
+      }
+      s.rcpts = append(s.rcpts, to); return nil
+  }
+  func (s *Session) Data(r io.Reader) error {   // verify SPF/DKIM/DMARC via go-msgauth, then store
+      res := authVerify(r)                       // go-msgauth: SPF + DKIM + DMARC
+      return s.store.Deliver(s.rcpts, res)       // → IMAP mailbox + reply-ingest event
+  }
+  ```
+- **`mail-engine/internal/imapd/` (new):** `go-imap` server + a Maildir/DB mailbox store, IMAP IDLE.
+- **Native reply-ingest:** on `Data()`, emit the same `champ.email.v1` reply event the existing
+  `reply_ingest.py` consumes — so ReplyIQ/ChampOps see native replies with zero downstream change.
+- **TLS:** STARTTLS + 465/993, **MTA-STS** policy file served on the control plane, **DANE/TLSA**
+  records published via the Cloudflare client. Re-verify DMARC RUA after.
+- **Gate:** `go-smtp :25` rejects unknown RCPT with 550 (no backscatter); Thunderbird connects via
+  IMAP; a seed reply round-trips into the event bus.
+
+### Phase 5 — pool + BYOD
+- **Pool:** domains 2..N each get own PTR + own DKIM selector/key + own SPF; `domain_rotation` +
+  the ramp-governor rotate the **per-IP** warmed pool (the `sending_ip` column from Phase 3 is the key).
+- **BYOD:** a provisioning flow that emits the DNS records a client adds to *their* domain
+  (`cloudflare_client` already automates ours); same DKIM-provision + **verify-before-send** gate as
+  managed domains (`domain_service` verification path).
+- **Gate:** a second warmed sender + a BYOD client domain both pass auth and rotate without
+  cross-contaminating reputation.
+
+> Why not coded now: a `go-smtp` inbound server is only meaningfully testable against a real :25 host
+> with a clean PTR (the `plan.md §6` gates). Shipping it untested would violate the plan's own
+> "prove auth passes before proceeding" discipline. The skeleton above is drop-in once Phase 0's host
+> exists.
+
 ## 4. One-line summary
 The local version is **architecturally already the documented system** (two planes, in-house Go MTA,
 control-plane gates). To reach *document level* it needs the **8 hardening fixes** above — B/C/D/E
