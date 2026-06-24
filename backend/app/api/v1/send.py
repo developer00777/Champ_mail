@@ -27,6 +27,20 @@ class SendEmailResponse(BaseModel):
     status: str
     domain_id: str
     sent_at: datetime
+    quality_score: Optional[float] = None   # Lavender-style pre-send score 0..1
+    quality_grade: Optional[str] = None     # A..F
+
+
+def _score_message(subject: str, html_body: str, text_body: Optional[str]):
+    """Non-blocking pre-send quality score. Returns (score, grade) or (None, None)."""
+    try:
+        from app.services.message_scorer import score_email
+        import re as _re
+        body = text_body or _re.sub(r"<[^>]+>", " ", html_body or "")
+        s = score_email(subject or "", body)
+        return s.score, s.grade
+    except Exception:
+        return None, None
 
 
 class BatchSendRequest(BaseModel):
@@ -61,6 +75,14 @@ async def send_email(
     current_user = Depends(get_current_user),
 ):
     try:
+        # Pre-send Lavender-style quality score (non-blocking; protects reputation).
+        q_score, q_grade = _score_message(request.subject, request.html_body, request.text_body)
+        if q_grade == "F":
+            import logging
+            logging.getLogger(__name__).warning(
+                "Low-quality send (grade F, score %.2f) to %s — subject=%r",
+                q_score or 0.0, request.to, request.subject)
+
         result = await mail_engine_client.send_email(
             recipient=request.to,
             recipient_name=request.from_name or "",
@@ -79,6 +101,8 @@ async def send_email(
             status=result.status,
             domain_id=result.domain_id,
             sent_at=result.sent_at,
+            quality_score=q_score,
+            quality_grade=q_grade,
         )
 
     except Exception as e:
